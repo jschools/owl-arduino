@@ -1,7 +1,7 @@
 
 #include <stdint.h>
 
-#define DEBUG true
+#define DEBUG false
 #define LOG(message) if (DEBUG) { Serial.print(message); }
 #define LOGLN(message) if (DEBUG) { Serial.println(message); }
 
@@ -9,16 +9,15 @@
 #define PIN_OUT_R 9
 #define PIN_OUT_B 11
 
-#define SAMPLE_COUNT 50
-#define DEFAULT_INPUT_SCALE 4.0f
-#define WINDOW_SIZE_MS 1000.0f
-#define WINDOW_AVERAGE_TARGET 0.85f
+#define SAMPLE_COUNT 100
+#define DEFAULT_INPUT_SCALE 4.0
+#define WINDOW_SIZE_MS 2000.0
+#define WINDOW_MAX_TARGET 0.95
 
 // global variables
-float inputScale;
-unsigned long lastInputTimeMs;
+double inputScale;
 unsigned long lastScaleTimeMs;
-float windowAverage;
+double inputWindowMax;
 
 void setup(){
   // Set the REF pin to output 1.1V
@@ -33,8 +32,8 @@ void setup(){
 
   // init global variables
   inputScale = DEFAULT_INPUT_SCALE;
-  lastInputTimeMs = millis();
-  windowAverage = WINDOW_AVERAGE_TARGET;
+  inputWindowMax = 0;
+  lastScaleTimeMs = 0;
 
   if (DEBUG) {
     // initialize debug logs
@@ -43,9 +42,14 @@ void setup(){
 }
 
 void loop() {
-  float normalized = readNormalized();
+  double normalized = readNormalized();
   LOG("in: ")
-  LOG(normalized)
+  char str[32];
+  dtostrf(normalized, 7, 5, str);
+  LOG(str)
+
+  // adjust scale
+  adjustScaleForInput(normalized);
 
   // scale
   normalized *= inputScale;
@@ -54,11 +58,8 @@ void loop() {
   LOG(" --> ")
   LOG(normalized)
 
-  // adjust scale
-  adjustScaleForLastInput(normalized);
-
   // correct the gamma
-  float output = convertGamma(normalized);
+  double output = convertGamma(normalized);
   LOG("; out: ")
   LOG(output)
 
@@ -66,9 +67,9 @@ void loop() {
   writeOutputPwm(output);
 }
 
-float readNormalized() {
+double readNormalized() {
   // sum a number of samples
-  uint16_t sum = 0;
+  uint32_t sum = 0;
   for (int i = 0; i < SAMPLE_COUNT; i++) {
     int inValue = analogRead(PIN_IN);
     
@@ -78,45 +79,49 @@ float readNormalized() {
   }
 
   // convert the sum to a float
-  float sumF = (float) sum;
+  double sumF = (double) sum;
 
   // map the sum onto [0..1]
-  float mapped = sumF / (512.0f * SAMPLE_COUNT);
+  double mapped = sumF / (512.0 * SAMPLE_COUNT);
 
-  return constrain(mapped, 0.0f, 1.0f);
+  return constrain(mapped, 0.0, 1.0);
 }
 
-float convertGamma(float x) {
+double convertGamma(double x) {
   return x * x * x;
 }
 
-void adjustScaleForLastInput(float normalized) {
-  unsigned long nowMs = millis();
-  float diffMs = (float) (nowMs - lastInputTimeMs);
-  float windowProportion = diffMs / WINDOW_SIZE_MS;
+void adjustScaleForInput(double normalizedInput) {
+  uint32_t nowMs = millis();
+  uint32_t timeSinceLastScaleUpdateMs = nowMs - lastScaleTimeMs;
 
-  windowAverage = windowProportion * normalized + (1.0f - windowProportion) * windowAverage;   
-  lastInputTimeMs = nowMs;
+  inputWindowMax = max(inputWindowMax, normalizedInput);
 
-  LOG("; A: ")
-  LOG(windowAverage)
-
-  unsigned long timeSinceLastScaleUpdateMs = nowMs - lastScaleTimeMs;
+  if (DEBUG) {
+    LOG("; wMax: ")
+    char str[16];
+    dtostrf(inputWindowMax, 7, 5, str);
+    LOG(str)
+  }
+  
   if (timeSinceLastScaleUpdateMs > WINDOW_SIZE_MS) {
-    inputScale = WINDOW_AVERAGE_TARGET / windowAverage;
+    inputScale = WINDOW_MAX_TARGET / inputWindowMax;
+
+    inputWindowMax = 0;
+    
     lastScaleTimeMs = nowMs;
   }
 }
 
 // converts into an unsigned 16-bit int equal to the magnitude of the input
-uint16_t convertAbs(int val) {
+uint32_t convertAbs(int val) {
   if (val < 0) {
-    return (uint16_t) -val;
+    return (uint32_t) -val;
   }
-  return (uint16_t) val;
+  return (uint32_t) val;
 }
 
-void writeOutputPwm(float duty) {
+void writeOutputPwm(double duty) {
   // map onto and constrain to [0..255]
   int output = (int) (duty * 255);
   output = constrain(output, 0, 255);
