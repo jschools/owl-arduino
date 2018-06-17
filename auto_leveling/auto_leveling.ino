@@ -9,15 +9,18 @@
 #define PIN_OUT_R 9
 #define PIN_OUT_B 11
 
-#define SAMPLE_COUNT 100
-#define DEFAULT_INPUT_SCALE 4.0
-#define WINDOW_SIZE_MS 2000.0
-#define WINDOW_MAX_TARGET 0.95
+#define THRESHOLD_CUTOFF_VALUE 0.006
+#define SAMPLE_WINDOW_MS 15
+#define DEFAULT_INPUT_SCALE 30.0
+#define AUTO_LEVEL_WINDOW_SIZE_MS 1000.0
+#define AUTO_LEVEL_WINDOW_MAX_TARGET 0.95
 
 // global variables
+uint32_t lastSampleTimeMs;
+double inputAccumulator;
 double inputScale;
-unsigned long lastScaleTimeMs;
-double inputWindowMax;
+uint32_t lastScaleTimeMs;
+double autoLevelWindowMax;
 
 void setup(){
   // Set the REF pin to output 1.1V
@@ -31,9 +34,11 @@ void setup(){
   pinMode(PIN_OUT_B, OUTPUT);
 
   // init global variables
+  inputAccumulator = 0;
   inputScale = DEFAULT_INPUT_SCALE;
-  inputWindowMax = 0;
-  lastScaleTimeMs = 0;
+  autoLevelWindowMax = 0;
+  lastSampleTimeMs = millis();
+  lastScaleTimeMs = millis();
 
   if (DEBUG) {
     // initialize debug logs
@@ -47,6 +52,9 @@ void loop() {
   char str[32];
   dtostrf(normalized, 7, 5, str);
   LOG(str)
+
+  // noise floor threshold
+  normalized = thresholdFilter(normalized);
 
   // adjust scale
   adjustScaleForInput(normalized);
@@ -68,23 +76,32 @@ void loop() {
 }
 
 double readNormalized() {
-  // sum a number of samples
-  uint32_t sum = 0;
-  for (int i = 0; i < SAMPLE_COUNT; i++) {
-    int inValue = analogRead(PIN_IN);
-    
-    int zeroCentered = inValue - 512;
+  uint32_t nowMs = millis();
+  uint32_t timeSinceLastSampleMs = nowMs - lastSampleTimeMs;
+  
+  // read the raw input and convert to magnitude from center
+  int inValue = analogRead(PIN_IN);
+  int zeroCentered = inValue - 512;
+  double absValue = (double) convertAbs(zeroCentered);
 
-    sum += convertAbs(zeroCentered);
+  // normalize the magnitude (map onto [0..1])
+  double normalized = absValue / 512.0;
+  normalized = constrain(normalized, 0.0, 1.0);
+
+  // update running average
+  double sampleProportion = (double) timeSinceLastSampleMs / SAMPLE_WINDOW_MS;
+  inputAccumulator = sampleProportion * normalized + (1.0 - sampleProportion) * inputAccumulator;
+
+  lastSampleTimeMs = nowMs;
+
+  return inputAccumulator;
+}
+
+double thresholdFilter(double input) {
+  if (input < THRESHOLD_CUTOFF_VALUE) {
+    return 0;
   }
-
-  // convert the sum to a float
-  double sumF = (double) sum;
-
-  // map the sum onto [0..1]
-  double mapped = sumF / (512.0 * SAMPLE_COUNT);
-
-  return constrain(mapped, 0.0, 1.0);
+  return input;
 }
 
 double convertGamma(double x) {
@@ -95,25 +112,25 @@ void adjustScaleForInput(double normalizedInput) {
   uint32_t nowMs = millis();
   uint32_t timeSinceLastScaleUpdateMs = nowMs - lastScaleTimeMs;
 
-  inputWindowMax = max(inputWindowMax, normalizedInput);
+  autoLevelWindowMax = max(autoLevelWindowMax, normalizedInput);
 
   if (DEBUG) {
     LOG("; wMax: ")
     char str[16];
-    dtostrf(inputWindowMax, 7, 5, str);
+    dtostrf(autoLevelWindowMax, 7, 5, str);
     LOG(str)
   }
   
-  if (timeSinceLastScaleUpdateMs > WINDOW_SIZE_MS) {
-    inputScale = WINDOW_MAX_TARGET / inputWindowMax;
+  if (timeSinceLastScaleUpdateMs > AUTO_LEVEL_WINDOW_SIZE_MS) {
+    inputScale = autoLevelWindowMax > 0 ? AUTO_LEVEL_WINDOW_MAX_TARGET / autoLevelWindowMax : DEFAULT_INPUT_SCALE;
 
-    inputWindowMax = 0;
+    autoLevelWindowMax = 0;
     
     lastScaleTimeMs = nowMs;
   }
 }
 
-// converts into an unsigned 16-bit int equal to the magnitude of the input
+// converts into an unsigned 32-bit int equal to the magnitude of the input
 uint32_t convertAbs(int val) {
   if (val < 0) {
     return (uint32_t) -val;
