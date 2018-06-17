@@ -1,7 +1,7 @@
 
 #include <stdint.h>
 
-#define DEBUG true
+#define DEBUG false
 #define LOG(message) if (DEBUG) { Serial.print(message); }
 #define LOGLN(message) if (DEBUG) { Serial.println(message); }
 
@@ -10,14 +10,18 @@
 #define PIN_OUT_B 11
 
 #define THRESHOLD_CUTOFF_VALUE 0.005
-#define SAMPLE_WINDOW_MS 10
+
+#define SAMPLE_WINDOW_LO_MS 15
+#define SAMPLE_WINDOW_HI_MS 10
+
 #define DEFAULT_INPUT_SCALE 30.0
 #define AUTO_LEVEL_WINDOW_SIZE_MS 1000.0
 #define AUTO_LEVEL_WINDOW_MAX_TARGET 0.95
 
 // global variables
 uint32_t lastSampleTimeMs;
-double inputAccumulator;
+double inputAccumulatorLo;
+double inputAccumulatorHi;
 double inputScale;
 uint32_t lastScaleTimeMs;
 double autoLevelWindowMax;
@@ -34,7 +38,8 @@ void setup(){
   pinMode(PIN_OUT_B, OUTPUT);
 
   // init global variables
-  inputAccumulator = 0;
+  inputAccumulatorLo = 0;
+  inputAccumulatorHi = 0;
   inputScale = DEFAULT_INPUT_SCALE;
   autoLevelWindowMax = 0;
   lastSampleTimeMs = millis();
@@ -47,35 +52,45 @@ void setup(){
 }
 
 void loop() {
-  double normalized = readNormalized();
-  LOG("in: ")
-  char str[32];
-  dtostrf(normalized, 7, 5, str);
-  LOG(str)
+  readNormalized();
+
+  double normalizedHi = inputAccumulatorHi;
+  double normalizedLo = inputAccumulatorLo;
+
+  if (DEBUG) {
+    LOG("inH: ")
+    char str[32];
+    dtostrf(normalizedHi, 7, 5, str);
+    LOG(str)
+  }
 
   // noise floor threshold
-  normalized = thresholdFilter(normalized);
+  normalizedHi = thresholdFilter(normalizedHi);
+  normalizedLo = thresholdFilter(normalizedLo);
 
   // adjust scale
-  adjustScaleForInput(normalized);
+  adjustScaleForInput(normalizedHi);
 
   // scale
-  normalized *= inputScale;
-  LOG("; scale: ")
+  normalizedHi *= inputScale;
+  normalizedLo *= inputScale;
+  LOG("; scaleH: ")
   LOG(inputScale)
   LOG(" --> ")
-  LOG(normalized)
+  LOG(normalizedHi)
 
   // correct the gamma
-  double output = convertGamma(normalized);
-  LOG("; out: ")
-  LOG(output)
+  double outputHi = convertGamma(normalizedHi);
+  double outputLo = convertGamma(normalizedLo);
+  LOG("; outH: ")
+  LOG(outputHi)
 
   // set the PWM output
-  writeOutputPwm(output);
+  writeOutputPwm(PIN_OUT_R, outputHi);
+  writeOutputPwm(PIN_OUT_B, outputLo);
 }
 
-double readNormalized() {
+void readNormalized() {
   uint32_t nowMs = millis();
   uint32_t timeSinceLastSampleMs = nowMs - lastSampleTimeMs;
   
@@ -88,13 +103,18 @@ double readNormalized() {
   double normalized = absValue / 512.0;
   normalized = constrain(normalized, 0.0, 1.0);
 
-  // update running average
-  double sampleProportion = (double) timeSinceLastSampleMs / SAMPLE_WINDOW_MS;
-  inputAccumulator = sampleProportion * normalized + (1.0 - sampleProportion) * inputAccumulator;
+  // update running averages
+  double sampleProportionLo = (double) timeSinceLastSampleMs / SAMPLE_WINDOW_LO_MS;
+  inputAccumulatorLo = sampleProportionLo * normalized + (1.0 - sampleProportionLo) * inputAccumulatorLo;
+
+  double sampleProportionHi = (double) timeSinceLastSampleMs / SAMPLE_WINDOW_HI_MS;
+  double loPass = sampleProportionHi * normalized + (1.0 - sampleProportionHi) * inputAccumulatorHi;
+  inputAccumulatorHi = normalized - loPass;
+
+  LOG("; dt: ")
+  LOG(timeSinceLastSampleMs)
 
   lastSampleTimeMs = nowMs;
-
-  return inputAccumulator;
 }
 
 double thresholdFilter(double input) {
@@ -138,7 +158,7 @@ uint32_t convertAbs(int val) {
   return (uint32_t) val;
 }
 
-void writeOutputPwm(double duty) {
+void writeOutputPwm(int pin, double duty) {
   // map onto and constrain to [0..255]
   int output = (int) (duty * 255);
   output = constrain(output, 0, 255);
@@ -146,7 +166,6 @@ void writeOutputPwm(double duty) {
   LOGLN(output)
   
   // set the output PWM
-  analogWrite(PIN_OUT_R, output);
-  analogWrite(PIN_OUT_B, output);
+  analogWrite(pin, output);
 }
 
