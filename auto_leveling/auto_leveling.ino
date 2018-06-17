@@ -9,14 +9,15 @@
 #define PIN_OUT_R 9
 #define PIN_OUT_B 11
 
-#define SAMPLE_COUNT 100
+#define SAMPLE_COUNT 50
 #define DEFAULT_INPUT_SCALE 4.0f
 #define WINDOW_SIZE_MS 1000.0f
-#define WINDOW_AVERAGE_TARGET 0.7f
+#define WINDOW_AVERAGE_TARGET 0.85f
 
 // global variables
 float inputScale;
 unsigned long lastInputTimeMs;
+unsigned long lastScaleTimeMs;
 float windowAverage;
 
 void setup(){
@@ -44,22 +45,22 @@ void setup(){
 void loop() {
   float normalized = readNormalized();
   LOG("in: ")
-  LOGLN(normalized)
+  LOG(normalized)
 
   // scale
   normalized *= inputScale;
-  LOG("scale: ")
+  LOG("; scale: ")
   LOG(inputScale)
   LOG(" --> ")
-  LOGLN(normalized)
+  LOG(normalized)
 
   // adjust scale
   adjustScaleForLastInput(normalized);
 
   // correct the gamma
   float output = convertGamma(normalized);
-  LOG("out: ")
-  LOGLN(output)
+  LOG("; out: ")
+  LOG(output)
 
   // set the PWM output
   writeOutputPwm(output);
@@ -94,18 +95,17 @@ void adjustScaleForLastInput(float normalized) {
   float diffMs = (float) (nowMs - lastInputTimeMs);
   float windowProportion = diffMs / WINDOW_SIZE_MS;
 
-  LOG("diffMs: ")
-  LOG(diffMs)
-  LOG(" --> p: ")
-  LOGLN(windowProportion)
-
-  windowAverage = windowProportion * normalized + (1.0f - windowProportion) * windowAverage;
-  inputScale = WINDOW_AVERAGE_TARGET / windowAverage;
-  
+  windowAverage = windowProportion * normalized + (1.0f - windowProportion) * windowAverage;   
   lastInputTimeMs = nowMs;
 
-  LOG("A: ")
-  LOGLN(windowAverage)
+  LOG("; A: ")
+  LOG(windowAverage)
+
+  unsigned long timeSinceLastScaleUpdateMs = nowMs - lastScaleTimeMs;
+  if (timeSinceLastScaleUpdateMs > WINDOW_SIZE_MS) {
+    inputScale = WINDOW_AVERAGE_TARGET / windowAverage;
+    lastScaleTimeMs = nowMs;
+  }
 }
 
 // converts into an unsigned 16-bit int equal to the magnitude of the input
@@ -120,7 +120,7 @@ void writeOutputPwm(float duty) {
   // map onto and constrain to [0..255]
   int output = (int) (duty * 255);
   output = constrain(output, 0, 255);
-  LOG("outPwm: ")
+  LOG("; outPwm: ")
   LOGLN(output)
   
   // set the output PWM
