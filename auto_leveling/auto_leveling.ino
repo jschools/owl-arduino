@@ -6,6 +6,7 @@
 #define LOGLN(message) if (DEBUG) { Serial.println(message); }
 
 #define PIN_IN A6
+#define PIN_IN_STEADY_MODE 2
 #define PIN_OUT_R 9
 #define PIN_OUT_B 11
 
@@ -26,10 +27,11 @@ void setup(){
   // Set the REF pin to output 1.1V
   analogReference(INTERNAL);
 
-  // Set input mode
+  // Set input modes
   pinMode(PIN_IN, INPUT);
+  pinMode(PIN_IN_STEADY_MODE, INPUT_PULLUP);
 
-  // Set output mode
+  // Set output modes
   pinMode(PIN_OUT_R, OUTPUT);
   pinMode(PIN_OUT_B, OUTPUT);
 
@@ -47,6 +49,16 @@ void setup(){
 }
 
 void loop() {
+  // check the mode
+  int steadyMode = digitalRead(PIN_IN_STEADY_MODE);
+  LOG("steadyMode: ")
+  LOGLN(steadyMode ? "T " : "F ")
+  if (steadyMode) {
+    digitalWrite(PIN_OUT_R, HIGH);
+    digitalWrite(PIN_OUT_B, HIGH);
+    return;
+  }
+  
   // read a sampled input value
   double normalized = readNormalized();
   
