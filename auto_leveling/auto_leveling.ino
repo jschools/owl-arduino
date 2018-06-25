@@ -5,15 +5,20 @@
 #define LOG(message) if (DEBUG) { Serial.print(message); }
 #define LOGLN(message) if (DEBUG) { Serial.println(message); }
 
-#define PIN_IN A6
-#define PIN_IN_STEADY_MODE 2
+#define PIN_IN_MUSIC A6
+#define PIN_IN_MODE_A 2
+#define PIN_IN_MODE_B 3
 #define PIN_OUT_R 9
 #define PIN_OUT_B 11
 
-#define THRESHOLD_CUTOFF_VALUE 0.006
-#define SAMPLE_WINDOW_MS 15
+#define MODE_CONSTANT_PURPLE 0
+#define MODE_CONSTANT_RED 1
+#define MODE_MUSIC_PURPLE 2
+
+#define THRESHOLD_CUTOFF_VALUE 0.008
+#define SAMPLE_WINDOW_MS 20
 #define DEFAULT_INPUT_SCALE 30.0
-#define AUTO_LEVEL_WINDOW_SIZE_MS 1000.0
+#define AUTO_LEVEL_WINDOW_SIZE_MS 3000.0
 #define AUTO_LEVEL_WINDOW_MAX_TARGET 0.95
 
 // global variables
@@ -28,8 +33,9 @@ void setup(){
   analogReference(INTERNAL);
 
   // Set input modes
-  pinMode(PIN_IN, INPUT);
-  pinMode(PIN_IN_STEADY_MODE, INPUT_PULLUP);
+  pinMode(PIN_IN_MUSIC, INPUT);
+  pinMode(PIN_IN_MODE_A, INPUT_PULLUP);
+  pinMode(PIN_IN_MODE_B, INPUT_PULLUP);
 
   // Set output modes
   pinMode(PIN_OUT_R, OUTPUT);
@@ -48,14 +54,33 @@ void setup(){
   }
 }
 
+int readMode() {
+  int modeA = digitalRead(PIN_IN_MODE_A);
+  int modeB = digitalRead(PIN_IN_MODE_B);
+
+  // pins are active-low
+  if (modeA == LOW && modeB == HIGH) {
+    return MODE_CONSTANT_PURPLE;
+  }
+  if (modeA == HIGH && modeB == LOW) {
+    return MODE_CONSTANT_RED;
+  }
+
+  // otherwise, respond to music
+  // not possible to have A == B == LOW
+  return MODE_MUSIC_PURPLE;
+}
+
 void loop() {
   // check the mode
-  int steadyMode = digitalRead(PIN_IN_STEADY_MODE);
-  LOG("steadyMode: ")
-  LOGLN(steadyMode ? "T " : "F ")
-  if (steadyMode) {
+  int mode = readMode();
+  if (mode == MODE_CONSTANT_PURPLE) {
     digitalWrite(PIN_OUT_R, HIGH);
     digitalWrite(PIN_OUT_B, HIGH);
+    return;
+  } else if (mode == MODE_CONSTANT_RED) {
+    digitalWrite(PIN_OUT_R, HIGH);
+    digitalWrite(PIN_OUT_B, LOW);
     return;
   }
   
@@ -98,7 +123,7 @@ double readNormalized() {
 
   // the input wave is centered around 0.55V
   // read the raw input and convert to magnitude from center
-  int inValue = analogRead(PIN_IN);
+  int inValue = analogRead(PIN_IN_MUSIC);
   int zeroCentered = inValue - 512;
   double absValue = (double) convertAbs(zeroCentered);
 
@@ -129,7 +154,7 @@ double thresholdFilter(double input) {
  *  a perceived linear intensity scale.
  */
 double convertGamma(double x) {
-  return pow(x, 3.0);
+  return pow(x, 1.5);
 }
 
 /* 
